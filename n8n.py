@@ -469,7 +469,6 @@ from selenium.webdriver.support import expected_conditions as EC
 # ========================
 options = webdriver.ChromeOptions()
 options.add_argument("--start-maximized")
-# Make browser less detectable
 options.add_argument("--disable-blink-features=AutomationControlled")
 options.add_experimental_option("excludeSwitches", ["enable-automation"])
 options.add_experimental_option("useAutomationExtension", False)
@@ -486,14 +485,22 @@ CLEAN_FILE = "google_maps_clean.csv"
 # Create RAW CSV with headers (overwrite if exists)
 with open(RAW_FILE, mode="w", newline="", encoding="utf-8") as file:
     writer = csv.writer(file)
-    writer.writerow(["Name", "Category", "Rating", "Address"])
+    writer.writerow(["Name", "Rating", "ReviewCount", "Category", "Address", "Hours", "Phone"])
 
 
 def save_to_csv(record, filename):
     """Save record to CSV file"""
     with open(filename, mode="a", newline="", encoding="utf-8") as file:
         writer = csv.writer(file)
-        writer.writerow([record["Name"], record["Category"], record["Rating"], record["Address"]])
+        writer.writerow([
+            record["Name"],
+            record["Rating"],
+            record["ReviewCount"],
+            record["Category"],
+            record["Address"],
+            record["Hours"],
+            record["Phone"]
+        ])
 
 
 def wait_for_loading_to_finish():
@@ -503,16 +510,15 @@ def wait_for_loading_to_finish():
             EC.presence_of_element_located((By.CSS_SELECTOR, "div.m6QErb.DxyBCb.kA9KIf.dS8AEf[aria-busy='true']"))
         )
     except TimeoutException:
-        pass  # If timeout, just continue
+        pass
 
 
 def visible_scroll(scrollable_element, driver):
     """Scroll visibly through the Google Maps results"""
     listings = driver.find_elements(By.CLASS_NAME, "Nv2PK")
     if listings:
-        # Scroll to the last loaded listing (so new ones load)
         driver.execute_script("arguments[0].scrollIntoView({behavior: 'smooth', block: 'end'});", listings[-1])
-        time.sleep(random.uniform(2, 4))  # wait for new results to load
+        time.sleep(random.uniform(2, 4))
 
 
 def scrape_google_maps(keyword):
@@ -525,7 +531,7 @@ def scrape_google_maps(keyword):
     results = []
     prev_len = 0
     stagnant_scrolls = 0
-    max_stagnant_scrolls = 5  # stop after 5 attempts with no new results
+    max_stagnant_scrolls = 5
 
     # Dismiss cookie consent if it appears
     try:
@@ -550,30 +556,59 @@ def scrape_google_maps(keyword):
     # Keep scrolling until no more results
     while stagnant_scrolls < max_stagnant_scrolls:
         wait_for_loading_to_finish()
-        time.sleep(random.uniform(1.5, 3.5))  # mimic human pause
+        time.sleep(random.uniform(1.5, 3.5))
 
         listings = driver.find_elements(By.CLASS_NAME, "Nv2PK")
 
         # Loop through NEW listings only
         for listing in listings[len(results):]:
+            # Default values
+            name, rating, review_count, category, address, hours, phone = "", "", "", "", "", "", ""
+
             try:
                 name = listing.find_element(By.CLASS_NAME, "qBF1Pd").text
             except NoSuchElementException:
-                name = ""
+                pass
 
             try:
-                rating = listing.find_element(By.CLASS_NAME, "MW4etd").text
+                rating_text = listing.find_element(By.CLASS_NAME, "MW4etd").text
+                if "(" in rating_text:
+                    rating, review_count = rating_text.split("(", 1)
+                    rating = rating.strip()
+                    review_count = review_count.replace(")", "").strip()
+                else:
+                    rating = rating_text
             except NoSuchElementException:
-                rating = ""
+                pass
 
             try:
                 details = listing.find_elements(By.CLASS_NAME, "W4Efsd")
-                category = details[0].text if len(details) > 0 else ""
-                address = details[1].text if len(details) > 1 else ""
+                if len(details) > 0:
+                    category = details[0].text
+                if len(details) > 1:
+                    address = details[1].text
             except:
-                category, address = "", ""
+                pass
 
-            record = {"Name": name, "Category": category, "Rating": rating, "Address": address}
+            try:
+                hours = listing.find_element(By.CLASS_NAME, "o0Svhf").text
+            except NoSuchElementException:
+                pass
+
+            try:
+                phone = listing.find_element(By.CLASS_NAME, "UsdlK").text
+            except NoSuchElementException:
+                pass
+
+            record = {
+                "Name": name,
+                "Rating": rating,
+                "ReviewCount": review_count,
+                "Category": category,
+                "Address": address,
+                "Hours": hours,
+                "Phone": phone
+            }
 
             results.append(record)
             save_to_csv(record, RAW_FILE)
@@ -587,7 +622,6 @@ def scrape_google_maps(keyword):
             stagnant_scrolls = 0
         prev_len = len(listings)
 
-        # Scroll visibly
         visible_scroll(scrollable, driver)
 
     print("✅ No more results to load.")
@@ -595,20 +629,20 @@ def scrape_google_maps(keyword):
 
 
 def remove_duplicates(input_file, output_file):
-    """Remove duplicate rows based on Name + Address"""
+    """Remove duplicate rows based on Name + Address + Phone"""
     seen = set()
     clean_rows = []
 
     with open(input_file, mode="r", encoding="utf-8") as infile:
         reader = csv.DictReader(infile)
         for row in reader:
-            key = (row["Name"], row["Address"])
+            key = (row["Name"], row["Address"], row["Phone"])
             if key not in seen:
                 seen.add(key)
                 clean_rows.append(row)
 
     with open(output_file, mode="w", newline="", encoding="utf-8") as outfile:
-        writer = csv.DictWriter(outfile, fieldnames=["Name", "Category", "Rating", "Address"])
+        writer = csv.DictWriter(outfile, fieldnames=["Name", "Rating", "ReviewCount", "Category", "Address", "Hours", "Phone"])
         writer.writeheader()
         writer.writerows(clean_rows)
 
@@ -629,7 +663,6 @@ if __name__ == "__main__":
         results = scrape_google_maps(keyword)
         all_results.extend(results)
 
-        # Random delay between keywords
         if keyword != keywords[-1]:
             delay = random.randint(10, 20)
             print(f"⏳ Waiting {delay} seconds before next search...")
