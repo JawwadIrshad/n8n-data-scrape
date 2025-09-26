@@ -1,3 +1,4 @@
+<<<<<<< HEAD
 # import time
 # import csv
 # import re
@@ -297,6 +298,9 @@
 
 
 
+=======
+#test2.py file 
+>>>>>>> 460a8dc23ce74fd7b4b020764525f355fec2b1d1
 import time
 import csv
 import re
